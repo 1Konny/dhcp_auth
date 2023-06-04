@@ -2,8 +2,6 @@ import socket
 import struct
 from OpenSSL import crypto
 from pathlib import Path
-# from cryptography.hazmat.primitives import serialization
-# from cryptography.hazmat.primitives.asymmetric import padding, hashes
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import padding
 
