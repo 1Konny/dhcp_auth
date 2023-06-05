@@ -14,16 +14,18 @@ __MAGIC_COOKIE__ = b'\x63\x82\x53\x63'
 
 
 class DHCPClient:
-    def __init__(self, server_ip): 
+    def __init__(self, server_ip):
         self.server_ip = server_ip
-        self.server_port =__SERVER_PORT__ 
-        self.client_port = __CLIENT_PORT__ 
+        self.server_port =__SERVER_PORT__
+        self.client_port = __CLIENT_PORT__
         self.client_socket = None
 
         self.msg_cutoff = __DHCP_MSG_LEN__
 
+        self.chaddr = getmac.get_mac_address().replace(':', '')
+
         self.certroot = Path(__CERT_ROOT__)
-        self.certificate_ca_path = self.certroot / __CERT_CA_NAME__ 
+        self.certificate_ca_path = self.certroot / __CERT_CA_NAME__
 
     def load_certificate(self, cert_data):
         return crypto.load_certificate(crypto.FILETYPE_PEM, cert_data)
@@ -49,23 +51,56 @@ class DHCPClient:
             print("Server certificate verification failed:", e)
             return False
 
-#     def create_dhcp_discover_packet(self, transaction_id):
-#         # Create the DHCP discover packet
-#         packet = struct.pack('!4B', 1, 1, 6, 0)  # DHCP discover message type
-#         packet += struct.pack('!I', transaction_id)  # Transaction ID
-#         packet += b'\x00\x00\x00\x00'  # Seconds elapsed
-#         packet += b'\x00\x00'  # Flags
-#         packet += b'\x00\x00\x00\x00'  # Client IP address
-#         packet += b'\x00\x00\x00\x00'  # Your server IP address
-#         packet += b'\x00\x00\x00\x00'  # Next server IP address
-#         packet += b'\x00\x00\x00\x00'  # Relay agent IP address
-#         packet += b'\x00\x00\x00\x00' * 4  # Client hardware address padding
-#         packet += b'\x00' * 192  # Padding
-#         packet += b'\x63\x82\x53\x63'  # Magic cookie
-#         packet += b'\x35\x01\x01'  # Option 53 (DHCP message type) - DHCP Discover
-#         packet += b'\xff'  # End of options
+    def create_dhcp_msg_packet(
+            self,
+            op,
+            transaction_id,
+            ciaddr=None,
+            yiaddr=None,
+            siaddr=None,
+            giaddr=None,
+            chaddr=None,
+            ):
 
-#         return packet
+        ciaddr = '0.0.0.0' if ciaddr is None else ciaddr
+        yiaddr = '0.0.0.0' if yiaddr is None else yiaddr
+        siaddr = '0.0.0.0' if siaddr is None else siaddr
+        giaddr = '0.0.0.0' if giaddr is None else giaddr
+        chaddr = '000000000000' if chaddr is None else chaddr
+
+        packet = b''
+        packet += struct.pack('!1B', op)            # OP: Operation Code. 1 for REQUEST, 2 for REPLY.
+        packet += struct.pack('!1B', 1)             # HTYPE: Hardware Address Type. 1 to specify ETHERNET.
+        packet += struct.pack('!1B', 6)             # HLEN: Hardware Address Length. 6 for MAC address.
+        packet += struct.pack('!1B', 0)             # HOPS: Number of relay agents a request message traveled.
+        packet += struct.pack('!I', transaction_id) # XID: Transaction ID. 4 bytes.
+        packet += struct.pack('!2B', 0, 0)          # SECS: Set to 0 by default. 
+        packet += struct.pack('!2B', 0, 0)          # FLAGS. 
+        packet += socket.inet_aton(ciaddr)          # CIADDR: Client IP address. 
+        packet += socket.inet_aton(yiaddr)          # YIADDR. Your IP address. 
+        packet += socket.inet_aton(siaddr)          # SIADDR. Server IP address.
+        packet += socket.inet_aton(giaddr)          # GIADDR. Relay agent IP address.
+        packet += bytearray.fromhex(chaddr+'00'*10) # CHADDR: Client hardware address. 16 bytes.
+        packet += b'\x00' * 192                     # Padding: 192 bytes.
+        packet += b'\x63\x82\x53\x63'               # Magic cookie.
+
+        return packet
+
+    def create_dhcp_option_packet(
+            self,
+            *triplets,
+            ):
+
+        packet = b''
+
+        for tag, length, values in triplets:
+            packet += struct.pack('!1B', tag)
+            packet += struct.pack('!1B', length)
+            packet += struct.pack(f'!{length}B', *values)
+
+        packet += struct.pack('!1B', 255)
+
+        return packet
 
     def create_dhcp_discover_packet(self, transaction_id):
         # References
@@ -74,45 +109,40 @@ class DHCPClient:
         # 3. https://en.wikipedia.org/wiki/Dynamic_Host_Configuration_Protocol
         # 4. http://www.ktword.co.kr/test/view/view.php?m_temp1=1925
 
-        packet = b''
-        packet += b'\x01'   # Operation Code (OP). 1 for REQUEST, 2 for REPLY.
-        packet += b'\x01'   # Hardware Address Type (HTYPE). 1 to specify ETHERNET.
-        packet += b'\x06'   # Hardware Address Length (HLEN). 6 for MAC address.
-        packet += b'\x00'   # Number of relay agents a request message traveled. (HOPS). 
-        packet += struct.pack('!I', transaction_id) # Transaction ID. 4 bytes.
-        packet += b'\x00\x00' # SECS. Set to 0 by default.
-        packet += b'\x00\x00' # FLAGS.
-        packet += b'\x00\x00\x00\x00'  # CIADDR. Client IP address.
-        packet += b'\x00\x00\x00\x00'  # YIADDR. Your server IP address.
-        packet += b'\x00\x00\x00\x00'  # SIADDR. Next server IP address.
-        packet += b'\x00\x00\x00\x00'  # GIADDR. Relay agent IP address.
-        # CHADDR. Client hardware address. 16 bytes.
-        packet += bytearray.fromhex((getmac.get_mac_address().replace(':', '') + '00' * 10)) 
-        packet += b'\x00' * 192  # Padding. 192 bytes.
-        # Now option fields follow in a Tag-Length-Value format.
-        # Option fields always start with Magic Cookie.
-        packet += b'\x63\x82\x53\x63'  # Magic cookie.
-        packet += b'\x35\x01\x01'  # Option 53 (DHCP message type). 1 for DHCP Discover.
-        packet += b'\xff'  # End of options
-        # int.from_bytes(b'\xff', 'big')
-        return packet 
+        # Create the DHCP discover packet
+
+        dhcp_msg = self.create_dhcp_msg_packet(
+                op=1,
+                transaction_id=transaction_id,
+                chaddr=self.chaddr,
+                )
+
+        dhcp_opt = self.create_dhcp_option_packet(
+                [53, 1, [1]], # Option 53 (DHCP message type). 1 for DHCP Discover.
+                )
+
+        packet = dhcp_msg + dhcp_opt
+
+        return packet
 
     def create_dhcp_request_packet(self, transaction_id, server_ip):
         # Create the DHCP request packet
-        packet = struct.pack('!4B', 1, 1, 6, 0)  # DHCP request message type
-        packet += struct.pack('!I', transaction_id)  # Transaction ID
-        packet += b'\x00\x00\x00\x00'  # Seconds elapsed
-        packet += b'\x00\x00'  # Flags
-        packet += b'\x00\x00\x00\x00'  # Client IP address
-        packet += server_ip  # Server IP address
-        packet += b'\x00\x00\x00\x00'  # Next server IP address
-        packet += b'\x00\x00\x00\x00'  # Relay agent IP address
-        packet += b'\x00\x00\x00\x00' * 4  # Client hardware address padding
-        packet += b'\x00' * 192  # Padding
-        packet += b'\x63\x82\x53\x63'  # Magic cookie
-        packet += b'\x35\x01\x03'  # Option 53 (DHCP message type) - DHCP Request
-        packet += b'\x32\x04' + server_ip  # Option 50 (Requested IP address)
-        packet += b'\xff'  # End of options
+
+        dhcp_msg = self.create_dhcp_msg_packet(
+                op=1,
+                transaction_id=transaction_id,
+                siaddr=server_ip,
+                chaddr=self.chaddr,
+                )
+
+        dhcp_opt = self.create_dhcp_option_packet(
+                # Option 53 (DHCP message type). 3 for DHCP Request.
+                [53, 1, [3]], 
+                # Option 50 (Requested IP address) 
+                [50, 4, [int(val) for val in server_ip.split('.')]], 
+                )
+
+        packet = dhcp_msg + dhcp_opt
 
         return packet
 
@@ -164,7 +194,11 @@ class DHCPClient:
                 return
 
             # Send DHCP request packet
-            request_packet = self.create_dhcp_request_packet(transaction_id, offer_packet[20:24])
+            request_packet = self.create_dhcp_request_packet(
+                    transaction_id, 
+                    # offer_packet[20:24],
+                    socket.inet_ntoa(offer_packet[20:24]),
+                    )
             self.client_socket.sendto(request_packet, (self.server_ip, self.server_port))
 
             print("DHCP request sent")
