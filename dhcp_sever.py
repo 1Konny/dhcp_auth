@@ -1,35 +1,29 @@
 import socket
 import struct
+import getmac
 from OpenSSL import crypto
 from pathlib import Path
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import padding
 
-
-__SERVER_PORT__ = 67
-__CLIENT_PORT__ = 68
-__CERT_SIZE__ = 2048
-__CERT_ROOT__ = 'certificates'
-__CERT_CA_NAME__ = 'rootCA.crt'
-__CERT_SERVER_NAME__ = 'dhcp.server.crt'
-__KEY_SERVER_NAME__ = 'dhcp.server.key'
-__DHCP_MSG_LEN__ = 240
-__MAGIC_COOKIE__ = b'\x63\x82\x53\x63'
+from dhcp_base import DHCPBase
 
 
-class DHCPServer:
-    def __init__(self, server_ip): 
-        self.server_ip = server_ip
-        self.server_port =__SERVER_PORT__ 
-        self.client_port = __CLIENT_PORT__ 
-        self.server_socket = None
-
-        self.msg_cutoff = __DHCP_MSG_LEN__
-
-        self.certroot = Path(__CERT_ROOT__)
-        self.certificate_ca_path = self.certroot / __CERT_CA_NAME__ 
-        self.private_key_server_path = self.certroot / __KEY_SERVER_NAME__ 
-        self.certificate_server_path = self.certroot / __CERT_SERVER_NAME__ 
+class DHCPServer(DHCPBase):
+    def __init__(
+            self, 
+            server_ip,
+            cert_root,
+            server_cert_name,
+            server_key_name,
+            ): 
+        super().__init__(
+                server_ip=server_ip,
+                cert_root=cert_root,
+                )
+        self.server_key_path = self.cert_root / server_key_name 
+        self.server_cert_path = self.cert_root / server_cert_name 
+        self.shaddr = getmac.get_mac_address().replace(':', '')
 
     def load_certificate(self, cert_file):
         with open(cert_file, 'rb') as cert:
@@ -45,113 +39,109 @@ class DHCPServer:
             return signature
 
     def create_dhcp_offer_packet(self, transaction_id, client_mac):
-        # Create the DHCP offer packet
-        packet = struct.pack('!4B', 2, 1, 6, 0)     # DHCP offer message type.  # packet[0:4]
-        packet += struct.pack('!I', transaction_id) # Transaction ID.           # packet[4:8]
-        packet += b'\x80\x00\x00\x00'               # Flags.                    # packet[8:12]
-        packet += socket.inet_aton('0.0.0.0')       # Client IP address.        # packet[12:16] 
-        packet += socket.inet_aton('192.168.1.1')   # Your IP address.          # packet[16:20]
-        packet += socket.inet_aton('192.168.1.100') # Server IP address.        # packet[20:24]
-        packet += socket.inet_aton('0.0.0.0')       # Relay agent IP address.   # packet[24:28] 
-        # CHADDR. Client hardware address. 16 bytes = 6 (MAC) + 10 (zero padding)
-        packet += b'\x00' * 16
-        #packet += bytearray.fromhex((getmac.get_mac_address().replace(':', '') + '00' * 10)) 
-        packet += b'\x00' * 192                     # Padding. 192 bytes.
-        packet += __MAGIC_COOKIE__                  # Magic cookie.
-        # print(len(packet))
+        # Create the DHCP offer msg 
+        dhcp_msg = self.create_dhcp_msg_packet(
+                op=2,
+                transaction_id=transaction_id,
+                yiaddr='192.168.1.1',
+                #siaddr=self.server_ip,
+                siaddr='192.168.1.100',
+                #chaddr=client_mac,
+                chaddr='000000000000',
+                )
 
-        # DHCP options
-        packet += b'\x35\x01\x02'                   # Option 53 (DHCP message type) - DHCP Offer
-        packet += b'\x36\x04\xc0\xa8\x01\x01'       # Option 54 (DHCP server identifier)
-        packet += b'\xff'                           # End of options
-        # print(len(packet))
+        # Create the DHCP offer option 
+        dhcp_opt = self.create_dhcp_option_packet(
+                [53, 1, [2]],                   # Option 53 (DHCP message type). 2 for DHCP Offer.
+                [54, 4, [192, 168, 1, 100]],    # Option 54 (DHCP server identifier)
+                )
+
+        packet = dhcp_msg + dhcp_opt
 
         # Sign the packet with server's private key
-        signature = self.sign_message(packet, self.private_key_server_path)
+        signature = self.sign_message(packet, self.server_key_path)
         packet += signature
-        # print(len(signature))
 
         return packet
 
     def create_dhcp_ack_packet(self, transaction_id, client_mac):
-        # Create the DHCP ACK packet
-        packet = struct.pack('!4B', 2, 1, 6, 0)     # DHCP offer message type.  # packet[0:4]
-        packet += struct.pack('!I', transaction_id) # Transaction ID.           # packet[4:8]
-        packet += b'\x80\x00\x00\x00'               # Flags.                    # packet[8:12]
-        packet += socket.inet_aton('0.0.0.0')       # Client IP address.        # packet[12:16] 
-        packet += socket.inet_aton('192.168.1.1')   # Your IP address.          # packet[16:20]
-        packet += socket.inet_aton('192.168.1.100') # Server IP address.        # packet[20:24]
-        packet += socket.inet_aton('0.0.0.0')       # Relay agent IP address.   # packet[24:28] 
-        # CHADDR. Client hardware address. 16 bytes = 6 (MAC) + 10 (zero padding)
-        packet += b'\x00' * 16
-        # packet += bytearray.fromhex((getmac.get_mac_address().replace(':', '') + '00' * 10)) 
-        packet += b'\x00' * 192                     # Padding. 192 bytes.
-        packet += __MAGIC_COOKIE__                  # Magic cookie.
+        # Create the DHCP ACK msg 
+        dhcp_msg = self.create_dhcp_msg_packet(
+                op=2,
+                transaction_id=transaction_id,
+                yiaddr='192.168.1.1',
+                #siaddr=self.server_ip,
+                siaddr='192.168.1.100',
+                #chaddr=client_mac,
+                chaddr='000000000000',
+                )
 
-        # DHCP options
-        packet += b'\x35\x01\x05'                   # Option 53 (DHCP message type) - DHCP ACK
-        packet += b'\x36\x04\xc0\xa8\x01\x01'       # Option 54 (DHCP server identifier)
-        packet += b'\xff'                           # End of options
+        # Create the DHCP ACK option 
+        dhcp_opt = self.create_dhcp_option_packet(
+                [53, 1, [5]],                   # Option 53 (DHCP message type). 5 for DHCP Ack.
+                [54, 4, [192, 168, 1, 100]],    # Option 54 (DHCP server identifier)
+                )
+
+        packet = dhcp_msg + dhcp_opt
 
         # Sign the packet with server's private key
-        signature = self.sign_message(packet, self.private_key_server_path)
+        signature = self.sign_message(packet, self.server_key_path)
         packet += signature
-
 
         return packet
 
     def start(self):
         # Create a socket and bind it to the DHCP server port
-        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.server_socket.bind((self.server_ip, self.server_port))
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.socket.bind((self.server_ip, self.server_port))
 
         print("DHCP server started on {}:{}".format(self.server_ip, self.server_port))
 
         while True:
             # Receive DHCP discover packet from client
-            data, address = self.server_socket.recvfrom(1024)
+            data, address = self.socket.recvfrom(1024)
             transaction_id = struct.unpack('!I', data[4:8])[0]
-            client_mac = ':'.join('{:02x}'.format(byte) for byte in data[28:34])
+            client_mac = ':'.join('{:02x}'.format(byte) for byte in data[28:34]).replace(':', '')
 
             print("Received DHCP discover from {} (transaction ID: {})".format(address[0], transaction_id))
 
             # Send server's certificate to the client
-            with open(self.certificate_server_path, 'rb') as cert_file:
+            with open(self.server_cert_path, 'rb') as cert_file:
                 cert_data = cert_file.read()
                 cert_length = struct.pack('!I', len(cert_data))
                 cert_length_data = cert_length + cert_data 
-                self.server_socket.sendto(cert_length_data, address)
+                self.socket.sendto(cert_length_data, address)
 
             print("Server certificate sent to {} (transaction ID: {})".format(address[0], transaction_id))
 
             # Create and send DHCP offer packet to client
             offer_packet = self.create_dhcp_offer_packet(transaction_id, client_mac)
-            self.server_socket.sendto(offer_packet, address)
+            self.socket.sendto(offer_packet, address)
 
             print("DHCP offer sent to {} (transaction ID: {})".format(address[0], transaction_id))
 
             # Receive DHCP request packet from client
-            data, address = self.server_socket.recvfrom(1024)
+            data, address = self.socket.recvfrom(1024)
             transaction_id = struct.unpack('!I', data[4:8])[0]
-            client_mac = ':'.join('{:02x}'.format(byte) for byte in data[28:34])
+            client_mac = ':'.join('{:02x}'.format(byte) for byte in data[28:34]).replace(':', '')
 
             print("Received DHCP request from {} (transaction ID: {})".format(address[0], transaction_id))
 
             # Create and send DHCP ACK packet to client
             ack_packet = self.create_dhcp_ack_packet(transaction_id, client_mac)
-            self.server_socket.sendto(ack_packet, address)
+            self.socket.sendto(ack_packet, address)
 
             print("DHCP ACK sent to {} (transaction ID: {})".format(address[0], transaction_id))
 
     def stop(self):
-        if self.server_socket:
-            self.server_socket.close()
+        if self.socket:
+            self.socket.close()
 
     def split_offer_packet(self, offer_packet_all):
         offer_msg, others = offer_packet_all[:self.msg_cutoff], offer_packet_all[self.msg_cutoff:]
 
         magic_cookie, others = others[:4], others[4:] 
-        assert magic_cookie == __MAGIC_COOKIE__ 
+        assert magic_cookie == self.magic_cookie 
 
         option_cutoff = others.find(b'\xff')
         offer_options, offer_signature = others[:option_cutoff], others[option_cutoff+1:]
@@ -159,11 +149,16 @@ class DHCPServer:
         # offer_options = [struct.unpack('!3B', offer_options[i:i+3]) for i in range(0, len(offer_options), 3)]
         return offer_msg, offer_options, offer_signature
 
+
 if __name__ == '__main__':
     server_ip = ''
-    server = DHCPServer(server_ip)
-    # offer_packet_all = server.create_dhcp_offer_packet(0, 0)
-    # offer_msg, offer_option, signature = server.split_offer_packet(offer_packet_all)
-    # import ipdb; ipdb.set_trace(context=25)
+    cert_root = 'certificates'
+    server_cert_name = 'dhcp.server.crt'
+    server_key_name = 'dhcp.server.key'
+    server = DHCPServer(
+            server_ip=server_ip,
+            cert_root=cert_root,
+            server_cert_name=server_cert_name,
+            server_key_name=server_key_name,
+            )
     server.start()
-

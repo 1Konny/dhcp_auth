@@ -4,35 +4,30 @@ from OpenSSL import crypto
 from pathlib import Path
 import getmac
 
-__SERVER_PORT__ = 67
-__CLIENT_PORT__ = 68
-__CERT_SIZE__ = 2048
-__CERT_ROOT__ = 'certificates'
-__CERT_CA_NAME__ = 'rootCA.crt'
-__DHCP_MSG_LEN__ = 240
-__MAGIC_COOKIE__ = b'\x63\x82\x53\x63'
+from dhcp_base import DHCPBase
 
 
-class DHCPClient:
-    def __init__(self, server_ip):
-        self.server_ip = server_ip
-        self.server_port =__SERVER_PORT__
-        self.client_port = __CLIENT_PORT__
-        self.client_socket = None
-
-        self.msg_cutoff = __DHCP_MSG_LEN__
+class DHCPClient(DHCPBase):
+    def __init__(
+            self, 
+            server_ip,
+            cert_root,
+            ca_cert_name,
+            ):
+        super().__init__(
+                server_ip=server_ip,
+                cert_root=cert_root,
+                )
 
         self.chaddr = getmac.get_mac_address().replace(':', '')
-
-        self.certroot = Path(__CERT_ROOT__)
-        self.certificate_ca_path = self.certroot / __CERT_CA_NAME__
+        self.ca_cert_path = self.cert_root / ca_cert_name 
 
     def load_certificate(self, cert_data):
         return crypto.load_certificate(crypto.FILETYPE_PEM, cert_data)
 
     def verify_certificate(self, certificate):
         # Load trusted CA certificate
-        with open(self.certificate_ca_path, 'rb') as ca_file:
+        with open(self.ca_cert_path, 'rb') as ca_file:
             ca_data = ca_file.read()
             ca_cert = self.load_certificate(ca_data)
 
@@ -51,72 +46,15 @@ class DHCPClient:
             print("Server certificate verification failed:", e)
             return False
 
-    def create_dhcp_msg_packet(
-            self,
-            op,
-            transaction_id,
-            ciaddr=None,
-            yiaddr=None,
-            siaddr=None,
-            giaddr=None,
-            chaddr=None,
-            ):
-
-        ciaddr = '0.0.0.0' if ciaddr is None else ciaddr
-        yiaddr = '0.0.0.0' if yiaddr is None else yiaddr
-        siaddr = '0.0.0.0' if siaddr is None else siaddr
-        giaddr = '0.0.0.0' if giaddr is None else giaddr
-        chaddr = '000000000000' if chaddr is None else chaddr
-
-        packet = b''
-        packet += struct.pack('!1B', op)            # OP: Operation Code. 1 for REQUEST, 2 for REPLY.
-        packet += struct.pack('!1B', 1)             # HTYPE: Hardware Address Type. 1 to specify ETHERNET.
-        packet += struct.pack('!1B', 6)             # HLEN: Hardware Address Length. 6 for MAC address.
-        packet += struct.pack('!1B', 0)             # HOPS: Number of relay agents a request message traveled.
-        packet += struct.pack('!I', transaction_id) # XID: Transaction ID. 4 bytes.
-        packet += struct.pack('!2B', 0, 0)          # SECS: Set to 0 by default. 
-        packet += struct.pack('!2B', 0, 0)          # FLAGS. 
-        packet += socket.inet_aton(ciaddr)          # CIADDR: Client IP address. 
-        packet += socket.inet_aton(yiaddr)          # YIADDR. Your IP address. 
-        packet += socket.inet_aton(siaddr)          # SIADDR. Server IP address.
-        packet += socket.inet_aton(giaddr)          # GIADDR. Relay agent IP address.
-        packet += bytearray.fromhex(chaddr+'00'*10) # CHADDR: Client hardware address. 16 bytes.
-        packet += b'\x00' * 192                     # Padding: 192 bytes.
-        packet += b'\x63\x82\x53\x63'               # Magic cookie.
-
-        return packet
-
-    def create_dhcp_option_packet(
-            self,
-            *triplets,
-            ):
-
-        packet = b''
-
-        for tag, length, values in triplets:
-            packet += struct.pack('!1B', tag)
-            packet += struct.pack('!1B', length)
-            packet += struct.pack(f'!{length}B', *values)
-
-        packet += struct.pack('!1B', 255)
-
-        return packet
-
     def create_dhcp_discover_packet(self, transaction_id):
-        # References
-        # 1. https://techhub.hpe.com/eginfolib/networking/docs/switches/5120si/cg/5998-8491_l3-ip-svcs_cg/content/436042653.htm
-        # 2. http://www.tcpipguide.com/free/t_DHCPMessageFormat.htm
-        # 3. https://en.wikipedia.org/wiki/Dynamic_Host_Configuration_Protocol
-        # 4. http://www.ktword.co.kr/test/view/view.php?m_temp1=1925
-
-        # Create the DHCP discover packet
-
+        # Create the DHCP discover msg 
         dhcp_msg = self.create_dhcp_msg_packet(
                 op=1,
                 transaction_id=transaction_id,
                 chaddr=self.chaddr,
                 )
 
+        # Create the DHCP discover option 
         dhcp_opt = self.create_dhcp_option_packet(
                 [53, 1, [1]], # Option 53 (DHCP message type). 1 for DHCP Discover.
                 )
@@ -126,8 +64,7 @@ class DHCPClient:
         return packet
 
     def create_dhcp_request_packet(self, transaction_id, server_ip):
-        # Create the DHCP request packet
-
+        # Create the DHCP request msg 
         dhcp_msg = self.create_dhcp_msg_packet(
                 op=1,
                 transaction_id=transaction_id,
@@ -135,6 +72,7 @@ class DHCPClient:
                 chaddr=self.chaddr,
                 )
 
+        # Create the DHCP request option 
         dhcp_opt = self.create_dhcp_option_packet(
                 # Option 53 (DHCP message type). 3 for DHCP Request.
                 [53, 1, [3]], 
@@ -164,7 +102,7 @@ class DHCPClient:
 
         try:
             # Receive server's certificate from server
-            cert_length_data, server_address = self.client_socket.recvfrom(__CERT_SIZE__)
+            cert_length_data, server_address = self.client_socket.recvfrom(self.cert_max_size)
             cert_length = cert_length_data[:4]
             cert_data = cert_length_data[4:4+int.from_bytes(cert_length, 'big')]
 
@@ -236,6 +174,11 @@ class DHCPClient:
 
 if __name__ == '__main__':
     server_ip = '<broadcast>'
-    client = DHCPClient(server_ip)
+    cert_root = 'certificates'
+    ca_cert_name = 'rootCA.crt'
+    client = DHCPClient(
+            server_ip=server_ip,
+            cert_root=cert_root,
+            ca_cert_name=ca_cert_name,
+            )
     client.start()
-
