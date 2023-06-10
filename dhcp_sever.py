@@ -38,11 +38,10 @@ class DHCPServer(DHCPBase):
 
             return packet
 
-    def sign_message(self, message, private_key_file, passphrase='1234'):
-        passphrase_bytes = passphrase.encode('utf-8')  # Convert passphrase to bytes
+    def sign_message(self, message, private_key_file):
         with open(private_key_file, 'rb') as key:
             key_data = key.read()
-            private_key = serialization.load_pem_private_key(key_data, password=passphrase_bytes)
+            private_key = serialization.load_pem_private_key(key_data, password=None)
             signature = private_key.sign(message, padding.PKCS1v15(), hashes.SHA256())
             return signature
 
@@ -150,8 +149,10 @@ class DHCPServer(DHCPBase):
 if __name__ == '__main__':
     server_ip = ''
     cert_root = 'certificates'
-    server_cert_name = 'dhcp.server.crt'
-    server_key_name = 'dhcp.server.key'
+    # server_cert_name = 'dhcp.server.crt'
+    # server_key_name = 'dhcp.server.key'
+    server_cert_name = 'dhcp.server.crt.nopass'
+    server_key_name = 'dhcp.server.key.nopass'
     server = DHCPServer(
             server_ip=server_ip,
             cert_root=cert_root,

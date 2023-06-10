@@ -28,45 +28,6 @@ class DHCPClient(DHCPBase):
         self.cert_store = crypto.X509Store()
         self.cert_store.add_cert(self.ca_cert)
 
-    def load_certificate(self, cert_data):
-        if isinstance(cert_data, (str, pathlib.PosixPath)):
-            with open(cert_data, 'rb') as ca_file:
-                cert_data = ca_file.read()
-
-        if isinstance(cert_data, (bytes,)):
-            cert_data = crypto.load_certificate(crypto.FILETYPE_PEM, cert_data)
-
-        if isinstance(cert_data, crypto.X509):
-            pass
-
-        return cert_data
-
-    def verify_certificate(self, certificate):
-        if certificate is None:
-            print("No certificate is received")
-            return None
-
-        certificate = self.load_certificate(certificate)
-
-        # Create a context with the certificate store
-        context = crypto.X509StoreContext(self.cert_store, certificate)
-
-        try:
-            context.verify_certificate()
-            print("Server certificate is valid.")
-            return certificate 
-        except crypto.X509StoreContextError as e:
-            print("Server certificate verification failed:", e)
-            return None 
-
-    def verify_packet(self, certificate, signature, packet):
-        if not crypto.verify(certificate, signature, packet, 'sha256'):
-            print("Packet verification succeeded.")
-            return certificate.get_pubkey()
-        else:
-            print("Packet verification failed. Aborting.")
-            return None
-
     def create_dhcp_discover_packet(self, transaction_id):
         # Create the DHCP discover msg 
         dhcp_msg = self.create_dhcp_msg_packet(
@@ -185,7 +146,6 @@ class DHCPClient(DHCPBase):
 
             # Extract assigned IP address from ACK packet
             assigned_ip = socket.inet_ntoa(ack_packet[16:20])
-
             print("Assigned IP address: {}".format(assigned_ip))
 
         except socket.timeout:
