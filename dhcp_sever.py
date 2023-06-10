@@ -1,10 +1,5 @@
 import socket
 import struct
-import getmac
-from OpenSSL import crypto
-from pathlib import Path
-from cryptography.hazmat.primitives import serialization, hashes
-from cryptography.hazmat.primitives.asymmetric import padding
 
 from dhcp_base import DHCPBase
 
@@ -16,34 +11,15 @@ class DHCPServer(DHCPBase):
             cert_root,
             server_cert_name,
             server_key_name,
+            ca_cert_name,
             ): 
         super().__init__(
                 server_ip=server_ip,
                 cert_root=cert_root,
+                my_cert_name=server_cert_name,
+                my_key_name=server_key_name,
+                trusted_cert_name=ca_cert_name,
                 )
-
-        self.shaddr = getmac.get_mac_address().replace(':', '')
-        self.server_key_path = self.cert_root / server_key_name 
-        self.server_cert_path = self.cert_root / server_cert_name 
-        self.my_cert_packet = self.create_certificate_packet()
-
-    def create_certificate_packet(self):
-        with open(self.server_cert_path, 'rb') as cert_file:
-            cert_data = cert_file.read()
-
-            packet = b''
-            packet += struct.pack('!1B', 90)
-            packet += struct.pack('!I', len(cert_data))
-            packet += cert_data 
-
-            return packet
-
-    def sign_message(self, message, private_key_file):
-        with open(private_key_file, 'rb') as key:
-            key_data = key.read()
-            private_key = serialization.load_pem_private_key(key_data, password=None)
-            signature = private_key.sign(message, padding.PKCS1v15(), hashes.SHA256())
-            return signature
 
     def create_dhcp_offer_packet(self, transaction_id, client_mac):
         # Create the DHCP offer msg 
@@ -67,7 +43,7 @@ class DHCPServer(DHCPBase):
         packet = dhcp_msg + dhcp_opt
 
         # Sign the packet with server's private key
-        signature = self.sign_message(packet, self.server_key_path)
+        signature = self.sign_message(packet, self.my_private_key)
         packet += signature
 
         return packet
@@ -94,7 +70,7 @@ class DHCPServer(DHCPBase):
         packet = dhcp_msg + dhcp_opt
 
         # Sign the packet with server's private key
-        signature = self.sign_message(packet, self.server_key_path)
+        signature = self.sign_message(packet, self.my_private_key)
         packet += signature
 
         return packet
@@ -129,6 +105,8 @@ class DHCPServer(DHCPBase):
             self.socket.sendto(ack_packet, address)
             print("DHCP ACK sent to {} (transaction ID: {})".format(address[0], transaction_id))
 
+        self.stop()
+
     def stop(self):
         if self.socket:
             self.socket.close()
@@ -149,14 +127,14 @@ class DHCPServer(DHCPBase):
 if __name__ == '__main__':
     server_ip = ''
     cert_root = 'certificates'
-    # server_cert_name = 'dhcp.server.crt'
-    # server_key_name = 'dhcp.server.key'
     server_cert_name = 'dhcp.server.crt.nopass'
     server_key_name = 'dhcp.server.key.nopass'
+    ca_cert_name = 'rootCA.crt'
     server = DHCPServer(
             server_ip=server_ip,
             cert_root=cert_root,
             server_cert_name=server_cert_name,
             server_key_name=server_key_name,
+            ca_cert_name=ca_cert_name,
             )
     server.start()

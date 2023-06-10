@@ -1,8 +1,5 @@
 import socket
 import struct
-from OpenSSL import crypto
-import pathlib
-import getmac
 
 from dhcp_base import DHCPBase
 
@@ -12,28 +9,22 @@ class DHCPClient(DHCPBase):
             self, 
             server_ip,
             cert_root,
+            client_key_name,
             ca_cert_name,
             ):
         super().__init__(
                 server_ip=server_ip,
                 cert_root=cert_root,
+                my_key_name=client_key_name,
+                trusted_cert_name=ca_cert_name,
                 )
-
-        self.chaddr = getmac.get_mac_address().replace(':', '')
-
-        # Load the trusted CA certificate
-        self.ca_cert = self.load_certificate(self.cert_root / ca_cert_name)
-
-        # Create a certificate store and add the trusted CA certificate
-        self.cert_store = crypto.X509Store()
-        self.cert_store.add_cert(self.ca_cert)
 
     def create_dhcp_discover_packet(self, transaction_id):
         # Create the DHCP discover msg 
         dhcp_msg = self.create_dhcp_msg_packet(
                 op=1,
                 transaction_id=transaction_id,
-                chaddr=self.chaddr,
+                chaddr=self.my_haddr,
                 )
 
         # Create the DHCP discover option 
@@ -51,7 +42,7 @@ class DHCPClient(DHCPBase):
                 op=1,
                 transaction_id=transaction_id,
                 siaddr=server_ip,
-                chaddr=self.chaddr,
+                chaddr=self.my_haddr,
                 )
 
         # Create the DHCP request option 
@@ -68,8 +59,8 @@ class DHCPClient(DHCPBase):
 
     def start(self):
         # Create a socket
-        self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.client_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
         print("DHCP client started")
 
@@ -78,7 +69,7 @@ class DHCPClient(DHCPBase):
 
         # Send DHCP discover packet
         discover_packet = self.create_dhcp_discover_packet(transaction_id)
-        self.client_socket.sendto(discover_packet, (self.server_ip, self.server_port))
+        self.socket.sendto(discover_packet, (self.server_ip, self.server_port))
 
         print("DHCP discover sent")
 
@@ -86,7 +77,7 @@ class DHCPClient(DHCPBase):
             # 2. DHCP Client <- DHCP Offer <- DHCP Server
 
             ## 2-1. Receive DHCP offer packet from server
-            offer_packet, server_address = self.client_socket.recvfrom(2048)
+            offer_packet, server_address = self.socket.recvfrom(2048)
             offer_msg, offer_options, offer_signature = self.split_received_packet(offer_packet)
             offer_options_dict = self.parse_all_options(offer_options)
 
@@ -95,14 +86,14 @@ class DHCPClient(DHCPBase):
             offer_certificate = self.verify_certificate(offer_certificate)
 
             if offer_certificate is None:
-                self.client_socket.close()
+                self.socket.close()
                 return
 
             ## 2-3. Verify the authenticity of the offer packet using the server's certificate (public key)..
             offer_key = self.verify_packet(offer_certificate, offer_signature, offer_msg+offer_options)
 
             if offer_key is None:
-                self.client_socket.close()
+                self.socket.close()
                 return
 
             #transaction_id = struct.unpack('!I', offer_msg[4:8])[0]
@@ -116,13 +107,13 @@ class DHCPClient(DHCPBase):
                     # offer_packet[20:24],
                     socket.inet_ntoa(offer_packet[20:24]),
                     )
-            self.client_socket.sendto(request_packet, (self.server_ip, self.server_port))
+            self.socket.sendto(request_packet, (self.server_ip, self.server_port))
             print("DHCP request sent")
 
             # 4. DHCP Client <= DHCP Ack <- DHCP Server
 
             ## 4-1. Receive DHCP ACK packet from server
-            ack_packet, server_address = self.client_socket.recvfrom(2048)
+            ack_packet, server_address = self.socket.recvfrom(2048)
             ack_msg, ack_options, ack_signature = self.split_received_packet(ack_packet)
             ack_options_dict = self.parse_all_options(ack_options)
 
@@ -131,14 +122,14 @@ class DHCPClient(DHCPBase):
             ack_certificate = self.verify_certificate(ack_certificate)
 
             if ack_certificate is None:
-                self.client_socket.close()
+                self.socket.close()
                 return
 
             ## 4-3. Verify the authenticity of the ack packet using the server's certificate (public key)..
             ack_key = self.verify_packet(ack_certificate, ack_signature, ack_msg+ack_options)
 
             if ack_key is None:
-                self.client_socket.close()
+                self.socket.close()
                 return
 
             ack_transaction_id = struct.unpack('!I', ack_packet[4:8])[0]
@@ -151,16 +142,18 @@ class DHCPClient(DHCPBase):
         except socket.timeout:
             print("No response received from DHCP server")
 
-        self.client_socket.close()
+        self.socket.close()
 
 
 if __name__ == '__main__':
     server_ip = '<broadcast>'
     cert_root = 'certificates'
     ca_cert_name = 'rootCA.crt'
+    client_key_name = None
     client = DHCPClient(
             server_ip=server_ip,
             cert_root=cert_root,
             ca_cert_name=ca_cert_name,
+            client_key_name=client_key_name,
             )
     client.start()
