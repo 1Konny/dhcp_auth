@@ -21,9 +21,15 @@ class DHCPServer(DHCPBase):
                 server_ip=server_ip,
                 cert_root=cert_root,
                 )
+
+        self.shaddr = getmac.get_mac_address().replace(':', '')
         self.server_key_path = self.cert_root / server_key_name 
         self.server_cert_path = self.cert_root / server_cert_name 
-        self.shaddr = getmac.get_mac_address().replace(':', '')
+
+        with open(self.server_cert_path, 'rb') as cert_file:
+            self.cert_data = cert_file.read()
+            self.cert_length = struct.pack('!I', len(self.cert_data))
+            self.cert_packet = self.cert_length + self.cert_data 
 
     def load_certificate(self, cert_file):
         with open(cert_file, 'rb') as cert:
@@ -99,25 +105,19 @@ class DHCPServer(DHCPBase):
 
         while True:
             # Receive DHCP discover packet from client
-            data, address = self.socket.recvfrom(1024)
-            transaction_id = struct.unpack('!I', data[4:8])[0]
-            client_mac = ':'.join('{:02x}'.format(byte) for byte in data[28:34]).replace(':', '')
-
-            print("Received DHCP discover from {} (transaction ID: {})".format(address[0], transaction_id))
+            rx_data, rx_address = self.socket.recvfrom(1024)
+            transaction_id = struct.unpack('!I', rx_data[4:8])[0]
+            client_mac = ':'.join('{:02x}'.format(byte) for byte in rx_data[28:34]).replace(':', '')
+            print("Received DHCP discover from {} (transaction ID: {})".format(client_mac, transaction_id))
 
             # Send server's certificate to the client
             with open(self.server_cert_path, 'rb') as cert_file:
-                cert_data = cert_file.read()
-                cert_length = struct.pack('!I', len(cert_data))
-                cert_length_data = cert_length + cert_data 
-                self.socket.sendto(cert_length_data, address)
-
-            print("Server certificate sent to {} (transaction ID: {})".format(address[0], transaction_id))
+                self.socket.sendto(self.cert_packet, rx_address)
+            print("Server certificate sent to {} (transaction ID: {})".format(rx_address[0], transaction_id))
 
             # Create and send DHCP offer packet to client
             offer_packet = self.create_dhcp_offer_packet(transaction_id, client_mac)
             self.socket.sendto(offer_packet, address)
-
             print("DHCP offer sent to {} (transaction ID: {})".format(address[0], transaction_id))
 
             # Receive DHCP request packet from client
