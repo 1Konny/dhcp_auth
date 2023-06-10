@@ -23,6 +23,7 @@ class DHCPBase:
         self.msg_cutoff = msg_cutoff
         self.cert_root = Path(cert_root)
         self.magic_cookie = magic_cookie
+        self.my_cert_packet = None
 
     def create_dhcp_msg_packet(
             self,
@@ -68,6 +69,7 @@ class DHCPBase:
     def create_dhcp_option_packet(
             self,
             *triplets,
+            add_certificate=False,
             ):
 
         packet = b''
@@ -77,6 +79,10 @@ class DHCPBase:
             packet += struct.pack('!1B', length)
             packet += struct.pack(f'!{length}B', *values)
 
+        if add_certificate:
+            assert self.my_cert_packet is not None
+            packet += self.my_cert_packet
+
         packet += struct.pack('!1B', 255)
 
         return packet
@@ -84,5 +90,41 @@ class DHCPBase:
     def split_received_packet(self, packet):
         msg, others = packet[:self.msg_cutoff], packet[self.msg_cutoff:]
         option_cutoff = others.find(b'\xff')
-        options, signature = others[:option_cutoff+1], others[option_cutoff+1:]
+        options = others[:option_cutoff+1]
+        signature = others[option_cutoff+1:]
         return msg, options, signature
+
+    def parse_one_options(self, options):
+        if options == b'\xff':
+            tag = length = values = others = None
+        else:
+            idx = 0
+            tag = struct.unpack('!1B', options[idx:idx+1])[0]
+            idx += 1
+
+            if tag == 90:
+                length = struct.unpack('!I', options[idx:idx+4])[0]
+                idx += 4
+
+                values = options[idx:idx+length]
+            else:
+                length = struct.unpack('!1B', options[idx:idx+1])[0]
+                idx += 1
+
+                values = struct.unpack(f'!{length}B', options[idx:idx+length])
+
+            others = options[idx+length:]
+        return tag, length, values, others
+
+    def parse_all_options(self, options):
+        options_dict = {}
+
+        while True:
+            tag, length, values, options = self.parse_one_options(options)
+            if tag:
+                options_dict[tag] = values
+            else:
+                break
+
+        return options_dict
+

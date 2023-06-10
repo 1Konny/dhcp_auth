@@ -1,7 +1,7 @@
 import socket
 import struct
 from OpenSSL import crypto
-from pathlib import Path
+import pathlib
 import getmac
 
 from dhcp_base import DHCPBase
@@ -20,31 +20,52 @@ class DHCPClient(DHCPBase):
                 )
 
         self.chaddr = getmac.get_mac_address().replace(':', '')
-        self.ca_cert_path = self.cert_root / ca_cert_name 
 
-    def load_certificate(self, cert_data):
-        return crypto.load_certificate(crypto.FILETYPE_PEM, cert_data)
-
-    def verify_certificate(self, certificate):
-        # Load trusted CA certificate
-        with open(self.ca_cert_path, 'rb') as ca_file:
-            ca_data = ca_file.read()
-            ca_cert = self.load_certificate(ca_data)
+        # Load the trusted CA certificate
+        self.ca_cert = self.load_certificate(self.cert_root / ca_cert_name)
 
         # Create a certificate store and add the trusted CA certificate
-        store = crypto.X509Store()
-        store.add_cert(ca_cert)
+        self.cert_store = crypto.X509Store()
+        self.cert_store.add_cert(self.ca_cert)
+
+    def load_certificate(self, cert_data):
+        if isinstance(cert_data, (str, pathlib.PosixPath)):
+            with open(cert_data, 'rb') as ca_file:
+                cert_data = ca_file.read()
+
+        if isinstance(cert_data, (bytes,)):
+            cert_data = crypto.load_certificate(crypto.FILETYPE_PEM, cert_data)
+
+        if isinstance(cert_data, crypto.X509):
+            pass
+
+        return cert_data
+
+    def verify_certificate(self, certificate):
+        if certificate is None:
+            print("No certificate is received")
+            return None
+
+        certificate = self.load_certificate(certificate)
 
         # Create a context with the certificate store
-        context = crypto.X509StoreContext(store, certificate)
+        context = crypto.X509StoreContext(self.cert_store, certificate)
 
         try:
             context.verify_certificate()
             print("Server certificate is valid.")
-            return True
+            return certificate 
         except crypto.X509StoreContextError as e:
             print("Server certificate verification failed:", e)
-            return False
+            return None 
+
+    def verify_packet(self, certificate, signature, packet):
+        if not crypto.verify(certificate, signature, packet, 'sha256'):
+            print("Packet verification succeeded.")
+            return certificate.get_pubkey()
+        else:
+            print("Packet verification failed. Aborting.")
+            return None
 
     def create_dhcp_discover_packet(self, transaction_id):
         # Create the DHCP discover msg 
@@ -101,59 +122,66 @@ class DHCPClient(DHCPBase):
         print("DHCP discover sent")
 
         try:
-            # Receive server's certificate from server
-            cert_length_data, server_address = self.client_socket.recvfrom(self.cert_max_size)
-            cert_length = cert_length_data[:4]
-            cert_data = cert_length_data[4:4+int.from_bytes(cert_length, 'big')]
+            # 2. DHCP Client <- DHCP Offer <- DHCP Server
 
-            # Load the received certificate
-            certificate = self.load_certificate(cert_data)
+            ## 2-1. Receive DHCP offer packet from server
+            offer_packet, server_address = self.client_socket.recvfrom(2048)
+            offer_msg, offer_options, offer_signature = self.split_received_packet(offer_packet)
+            offer_options_dict = self.parse_all_options(offer_options)
 
-            # Verify the server's certificate
-            if not self.verify_certificate(certificate):
-                print("Server certificate verification failed. Aborting.")
-                return
-            else:
-                print("Server is authenticated")
+            ## 2-2. Verify the validity of the offer certificate using the CA's certificate (public key). 
+            offer_certificate = offer_options_dict.get(90, None)
+            offer_certificate = self.verify_certificate(offer_certificate)
 
-            # Receive DHCP offer packet from server
-            offer_packet, server_address = self.client_socket.recvfrom(1024)
-            offer_msg, offer_option, offer_signature = self.split_received_packet(offer_packet)
-            transaction_id = struct.unpack('!I', offer_msg[4:8])[0]
-
-            print("Received DHCP offer from {} (transaction ID: {})".format(server_address[0], transaction_id))
-
-            # Verify the authenticity of the offer packet using the server's public key
-            # public_key = certificate.get_pubkey()
-            if not crypto.verify(certificate, offer_signature, offer_msg+offer_option, 'sha256'):
-                print("Offer packet verification succeeded.")
-            else:
-                print("Offer packet verification failed. Aborting.")
+            if offer_certificate is None:
+                self.client_socket.close()
                 return
 
-            # Send DHCP request packet
+            ## 2-3. Verify the authenticity of the offer packet using the server's certificate (public key)..
+            offer_key = self.verify_packet(offer_certificate, offer_signature, offer_msg+offer_options)
+
+            if offer_key is None:
+                self.client_socket.close()
+                return
+
+            #transaction_id = struct.unpack('!I', offer_msg[4:8])[0]
+            offer_transaction_id = struct.unpack('!I', offer_msg[4:8])[0]
+            print("Received DHCP offer from {} (transaction ID: {})".format(server_address[0], offer_transaction_id))
+
+            # 3. DHCP Client -> DHCP Request -> DHCP Server
+            ## 3-1. Send DHCP request packet to server
             request_packet = self.create_dhcp_request_packet(
                     transaction_id, 
                     # offer_packet[20:24],
                     socket.inet_ntoa(offer_packet[20:24]),
                     )
             self.client_socket.sendto(request_packet, (self.server_ip, self.server_port))
-
             print("DHCP request sent")
 
-            # Receive DHCP ACK packet from server
-            ack_packet, server_address = self.client_socket.recvfrom(1024)
-            ack_msg, ack_option, ack_signature = self.split_received_packet(ack_packet)
-            transaction_id = struct.unpack('!I', ack_packet[4:8])[0]
+            # 4. DHCP Client <= DHCP Ack <- DHCP Server
 
-            print("Received DHCP ACK from {} (transaction ID: {})".format(server_address[0], transaction_id))
+            ## 4-1. Receive DHCP ACK packet from server
+            ack_packet, server_address = self.client_socket.recvfrom(2048)
+            ack_msg, ack_options, ack_signature = self.split_received_packet(ack_packet)
+            ack_options_dict = self.parse_all_options(ack_options)
 
-            # Verify the authenticity of the ACK packet using the server's public key
-            if not crypto.verify(certificate, ack_signature, ack_msg+ack_option, 'sha256'):
-                print("ACK packet verification succeeded.")
-            else:
-                print("ACK packet verification failed. Aborting.")
+            ## 4-2. Verify the validity of the ack certificate using the CA's certificate (public key). 
+            ack_certificate = ack_options_dict.get(90, None)
+            ack_certificate = self.verify_certificate(ack_certificate)
+
+            if ack_certificate is None:
+                self.client_socket.close()
                 return
+
+            ## 4-3. Verify the authenticity of the ack packet using the server's certificate (public key)..
+            ack_key = self.verify_packet(ack_certificate, ack_signature, ack_msg+ack_options)
+
+            if ack_key is None:
+                self.client_socket.close()
+                return
+
+            ack_transaction_id = struct.unpack('!I', ack_packet[4:8])[0]
+            print("Received DHCP ACK from {} (transaction ID: {})".format(server_address[0], ack_transaction_id))
 
             # Extract assigned IP address from ACK packet
             assigned_ip = socket.inet_ntoa(ack_packet[16:20])
@@ -164,12 +192,6 @@ class DHCPClient(DHCPBase):
             print("No response received from DHCP server")
 
         self.client_socket.close()
-
-    def split_received_packet(self, packet):
-        msg, others = packet[:self.msg_cutoff], packet[self.msg_cutoff:]
-        option_cutoff = others.find(b'\xff')
-        options, signature = others[:option_cutoff+1], others[option_cutoff+1:]
-        return msg, options, signature
 
 
 if __name__ == '__main__':

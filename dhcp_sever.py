@@ -25,16 +25,18 @@ class DHCPServer(DHCPBase):
         self.shaddr = getmac.get_mac_address().replace(':', '')
         self.server_key_path = self.cert_root / server_key_name 
         self.server_cert_path = self.cert_root / server_cert_name 
+        self.my_cert_packet = self.create_certificate_packet()
 
+    def create_certificate_packet(self):
         with open(self.server_cert_path, 'rb') as cert_file:
-            self.cert_data = cert_file.read()
-            self.cert_length = struct.pack('!I', len(self.cert_data))
-            self.cert_packet = self.cert_length + self.cert_data 
+            cert_data = cert_file.read()
 
-    def load_certificate(self, cert_file):
-        with open(cert_file, 'rb') as cert:
-            cert_data = cert.read()
-            return crypto.load_certificate(crypto.FILETYPE_PEM, cert_data)
+            packet = b''
+            packet += struct.pack('!1B', 90)
+            packet += struct.pack('!I', len(cert_data))
+            packet += cert_data 
+
+            return packet
 
     def sign_message(self, message, private_key_file, passphrase='1234'):
         passphrase_bytes = passphrase.encode('utf-8')  # Convert passphrase to bytes
@@ -60,6 +62,7 @@ class DHCPServer(DHCPBase):
         dhcp_opt = self.create_dhcp_option_packet(
                 [53, 1, [2]],                   # Option 53 (DHCP message type). 2 for DHCP Offer.
                 [54, 4, [192, 168, 1, 100]],    # Option 54 (DHCP server identifier)
+                add_certificate=True,           # Option 90 (DHCP authentication option)
                 )
 
         packet = dhcp_msg + dhcp_opt
@@ -86,6 +89,7 @@ class DHCPServer(DHCPBase):
         dhcp_opt = self.create_dhcp_option_packet(
                 [53, 1, [5]],                   # Option 53 (DHCP message type). 5 for DHCP Ack.
                 [54, 4, [192, 168, 1, 100]],    # Option 54 (DHCP server identifier)
+                add_certificate=True,           # Option 90 (DHCP authentication option)
                 )
 
         packet = dhcp_msg + dhcp_opt
@@ -110,27 +114,20 @@ class DHCPServer(DHCPBase):
             client_mac = ':'.join('{:02x}'.format(byte) for byte in rx_data[28:34]).replace(':', '')
             print("Received DHCP discover from {} (transaction ID: {})".format(client_mac, transaction_id))
 
-            # Send server's certificate to the client
-            with open(self.server_cert_path, 'rb') as cert_file:
-                self.socket.sendto(self.cert_packet, rx_address)
-            print("Server certificate sent to {} (transaction ID: {})".format(rx_address[0], transaction_id))
-
             # Create and send DHCP offer packet to client
             offer_packet = self.create_dhcp_offer_packet(transaction_id, client_mac)
-            self.socket.sendto(offer_packet, address)
-            print("DHCP offer sent to {} (transaction ID: {})".format(address[0], transaction_id))
+            self.socket.sendto(offer_packet, rx_address)
+            print("DHCP offer sent to {} (transaction ID: {})".format(rx_address[0], transaction_id))
 
             # Receive DHCP request packet from client
             data, address = self.socket.recvfrom(1024)
             transaction_id = struct.unpack('!I', data[4:8])[0]
             client_mac = ':'.join('{:02x}'.format(byte) for byte in data[28:34]).replace(':', '')
-
             print("Received DHCP request from {} (transaction ID: {})".format(address[0], transaction_id))
 
             # Create and send DHCP ACK packet to client
             ack_packet = self.create_dhcp_ack_packet(transaction_id, client_mac)
             self.socket.sendto(ack_packet, address)
-
             print("DHCP ACK sent to {} (transaction ID: {})".format(address[0], transaction_id))
 
     def stop(self):
