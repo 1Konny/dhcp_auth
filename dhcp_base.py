@@ -2,8 +2,8 @@ import socket
 import struct
 import getmac
 import pathlib
-from OpenSSL import crypto
 
+from OpenSSL import crypto
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import padding
 
@@ -113,18 +113,6 @@ class DHCPBase:
             print("Packet verification failed.")
             return None
 
-    def create_dhcp_auth_packet(self, certificate):
-        assert isinstance(certificate, crypto.X509)
-        cert_data = crypto.dump_certificate(crypto.FILETYPE_PEM, certificate)
-
-        packet = b''
-        packet += struct.pack('!1B', 90)
-        packet += struct.pack('!I', len(cert_data))
-        packet += cert_data 
-
-        return packet
-
-
     def create_dhcp_msg_packet(
             self,
             op,
@@ -163,6 +151,17 @@ class DHCPBase:
         packet += bytearray.fromhex(chaddr+'00'*10) # CHADDR: Client hardware address. 16 bytes.
         packet += b'\x00' * 192                     # Padding: 192 bytes.
         packet += b'\x63\x82\x53\x63'               # Magic cookie.
+
+        return packet
+
+    def create_dhcp_auth_packet(self, certificate):
+        assert isinstance(certificate, crypto.X509)
+        cert_data = crypto.dump_certificate(crypto.FILETYPE_PEM, certificate)
+
+        packet = b''
+        packet += struct.pack('!1B', 90)
+        packet += struct.pack('!I', len(cert_data))
+        packet += cert_data 
 
         return packet
 
@@ -227,4 +226,3 @@ class DHCPBase:
                 break
 
         return options_dict
-
