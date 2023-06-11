@@ -22,21 +22,28 @@ class DHCPServer(DHCPBase):
                 )
 
     def create_dhcp_offer_packet(self, transaction_id, client_mac):
+        # Reference: https://en.wikipedia.org/wiki/Dynamic_Host_Configuration_Protocol#Offer
+
         # Create the DHCP offer msg 
         dhcp_msg = self.create_dhcp_msg_packet(
                 op=2,
                 transaction_id=transaction_id,
-                yiaddr='192.168.1.1',
-                #siaddr=self.server_ip,
-                siaddr='192.168.1.100',
-                #chaddr=client_mac,
-                chaddr='000000000000',
+                ciaddr='0.0.0.0',
+                yiaddr='172.17.0.3',
+                siaddr=self.server_ip,
+                chaddr=client_mac,
                 )
 
+        server_ip = '172.17.0.2'
         # Create the DHCP offer option 
         dhcp_opt = self.create_dhcp_option_packet(
                 [53, 1, [2]],                   # Option 53 (DHCP message type). 2 for DHCP Offer.
-                [54, 4, [192, 168, 1, 100]],    # Option 54 (DHCP server identifier)
+                [1, 4, [255, 255, 255, 0]],     # Option 01 (Subnet Mask).
+                [3, 4, [172, 17, 0, 100]],       # Option 03 (Router IP).
+                [51, 4, [0, 1, 81, 128]],       # Option 51 (IP address lease time). For 1 day.
+                # # Option 54 (DHCP server identifier).
+                [54, 4, [int(val) for val in self.server_ip.split('.')]],
+                [6, 4, [172, 17, 0, 101]],         # Option 06 (DNS Server).
                 add_certificate=True,           # Option 90 (DHCP authentication option)
                 )
 
@@ -53,17 +60,21 @@ class DHCPServer(DHCPBase):
         dhcp_msg = self.create_dhcp_msg_packet(
                 op=2,
                 transaction_id=transaction_id,
-                yiaddr='192.168.1.1',
-                #siaddr=self.server_ip,
-                siaddr='192.168.1.100',
-                #chaddr=client_mac,
-                chaddr='000000000000',
+                ciaddr='0.0.0.0',
+                yiaddr='172.17.0.3',
+                siaddr=self.server_ip,
+                chaddr=client_mac,
                 )
 
         # Create the DHCP ACK option 
         dhcp_opt = self.create_dhcp_option_packet(
                 [53, 1, [5]],                   # Option 53 (DHCP message type). 5 for DHCP Ack.
-                [54, 4, [192, 168, 1, 100]],    # Option 54 (DHCP server identifier)
+                [1, 4, [255, 255, 255, 0]],     # Option 01 (Subnet Mask).
+                [3, 4, [172, 17, 0, 100]],       # Option 03 (Router IP).
+                [51, 4, [0, 1, 81, 128]],       # Option 51 (IP address lease time). For 1 day.
+                # # Option 54 (DHCP server identifier).
+                [54, 4, [int(val) for val in self.server_ip.split('.')]],
+                [6, 4, [172, 17, 0, 101]],         # Option 06 (DNS Server).
                 add_certificate=True,           # Option 90 (DHCP authentication option)
                 )
 
@@ -78,7 +89,7 @@ class DHCPServer(DHCPBase):
     def start(self):
         # Create a socket and bind it to the DHCP server port
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.socket.bind((self.server_ip, self.server_port))
+        self.socket.bind(('', self.server_port))
 
         print("DHCP server started on {}:{}".format(self.server_ip, self.server_port))
 
@@ -111,21 +122,9 @@ class DHCPServer(DHCPBase):
         if self.socket:
             self.socket.close()
 
-    def split_offer_packet(self, offer_packet_all):
-        offer_msg, others = offer_packet_all[:self.msg_cutoff], offer_packet_all[self.msg_cutoff:]
-
-        magic_cookie, others = others[:4], others[4:] 
-        assert magic_cookie == self.magic_cookie 
-
-        option_cutoff = others.find(b'\xff')
-        offer_options, offer_signature = others[:option_cutoff], others[option_cutoff+1:]
-        # assert len(offer_options) % 3 == 0
-        # offer_options = [struct.unpack('!3B', offer_options[i:i+3]) for i in range(0, len(offer_options), 3)]
-        return offer_msg, offer_options, offer_signature
-
 
 if __name__ == '__main__':
-    server_ip = ''
+    server_ip = '172.17.0.2'
     cert_root = 'certificates'
     server_cert_name = 'dhcp.server.crt.nopass'
     server_key_name = 'dhcp.server.key.nopass'

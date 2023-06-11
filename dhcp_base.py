@@ -175,7 +175,7 @@ class DHCPBase:
 
         for tag, length, values in triplets:
             packet += struct.pack('!1B', tag)
-            packet += struct.pack('!1B', length)
+            packet += struct.pack('!1I', length)
             packet += struct.pack(f'!{length}B', *values)
 
         if add_certificate:
@@ -188,29 +188,27 @@ class DHCPBase:
 
     def split_received_packet(self, packet):
         msg, others = packet[:self.msg_cutoff], packet[self.msg_cutoff:]
-        option_cutoff = others.find(b'\xff')
-        options = others[:option_cutoff+1]
-        signature = others[option_cutoff+1:]
-        return msg, options, signature
+        options, options_dict, signature = self.parse_all_options(others)
+        return msg, options, options_dict, signature
 
     def parse_one_options(self, options):
-        if options == b'\xff':
-            tag = length = values = others = None
+        if options[:1] == b'\xff':
+            tag = length = values = None
+            others = options[1:]
+            return tag, length, values, others
+
         else:
             idx = 0
+
             tag = struct.unpack('!1B', options[idx:idx+1])[0]
             idx += 1
 
-            if tag == 90:
-                length = struct.unpack('!I', options[idx:idx+4])[0]
-                idx += 4
+            length = struct.unpack('!I', options[idx:idx+4])[0]
+            idx += 4
 
-                values = options[idx:idx+length]
-            else:
-                length = struct.unpack('!1B', options[idx:idx+1])[0]
-                idx += 1
-
-                values = struct.unpack(f'!{length}B', options[idx:idx+length])
+            values = options[idx:idx+length]
+            if tag != 90:
+                values = struct.unpack(f'!{length}B', values)
 
             others = options[idx+length:]
         return tag, length, values, others
@@ -218,11 +216,13 @@ class DHCPBase:
     def parse_all_options(self, options):
         options_dict = {}
 
+        others = options
         while True:
-            tag, length, values, options = self.parse_one_options(options)
+            tag, length, values, others = self.parse_one_options(others)
             if tag:
                 options_dict[tag] = values
             else:
                 break
 
-        return options_dict
+        cutoff = options.index(others)
+        return options[:cutoff], options_dict, options[cutoff:]
