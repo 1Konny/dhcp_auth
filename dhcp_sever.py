@@ -34,7 +34,6 @@ class DHCPServer(DHCPBase):
                 chaddr=client_mac,
                 )
 
-        server_ip = '172.17.0.2'
         # Create the DHCP offer option 
         dhcp_opt = self.create_dhcp_option_packet(
                 [53, 1, [2]],                   # Option 53 (DHCP message type). 2 for DHCP Offer.
