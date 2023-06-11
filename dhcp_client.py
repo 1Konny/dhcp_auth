@@ -155,8 +155,18 @@ class DHCPClient(DHCPBase):
             print("Received DHCP ACK from {} (transaction ID: {})".format(server_address[0], ack_transaction_id))
 
             # Extract assigned IP address from ACK packet
-            assigned_ip = socket.inet_ntoa(ack_packet[16:20])
-            print("Assigned IP address: {}".format(assigned_ip))
+            print('='*50)
+            self.client_ip = socket.inet_ntoa(ack_packet[16:20])
+            self.server_ip = socket.inet_ntoa(ack_packet[20:24])
+            self.subnet_mask = '.'.join([str(val) for val in ack_options_dict[1]])
+            self.router_ip = '.'.join([str(val) for val in ack_options_dict[3]])
+            self.dns_server_ip = '.'.join([str(val) for val in ack_options_dict[6]])
+            print("Assigned IP address: {}".format(self.client_ip))
+            print("Server IP address: {}".format(self.server_ip))
+            print("Subnet mask: {}".format(self.subnet_mask))
+            print("Router IP address: {}".format(self.router_ip))
+            print("DNS server IP address: {}".format(self.dns_server_ip))
+            print('='*50)
 
         except socket.timeout:
             print("No response received from DHCP server")

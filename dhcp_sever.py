@@ -56,6 +56,8 @@ class DHCPServer(DHCPBase):
         return packet
 
     def create_dhcp_ack_packet(self, transaction_id, client_mac):
+        # Reference: https://en.wikipedia.org/wiki/Dynamic_Host_Configuration_Protocol#Acknowledgement
+
         # Create the DHCP ACK msg 
         dhcp_msg = self.create_dhcp_msg_packet(
                 op=2,
