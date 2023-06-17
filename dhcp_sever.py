@@ -78,14 +78,20 @@ class DHCPServer(DHCPBase):
 
         # Create the DHCP ACK option
         dhcp_opt = self.create_dhcp_option_packet(
-                [53, 1, [5]],                   # Option 53 (DHCP message type). 5 for DHCP Ack.
-                [1, 4, [255, 255, 255, 0]],     # Option 01 (Subnet Mask).
-                [3, 4, [172, 17, 0, 100]],       # Option 03 (Router IP).
-                [51, 4, [0, 1, 81, 128]],       # Option 51 (IP address lease time). For 1 day.
+                # Option 53 (DHCP message type). 5 for DHCP ACK.
+                [53, 1, [5]],
+                # Option 01 (Subnet Mask).
+                [1, 4, [255, 255, 255, 0]],
+                # Option 03 (Router IP).
+                [3, 4, [172, 17, 0, 100]],
+                # Option 51 (IP address lease time). For 1 day.
+                [51, 4, [0, 1, 81, 128]],
                 # # Option 54 (DHCP server identifier).
                 [54, 4, [int(val) for val in self.server_ip.split('.')]],
-                [6, 4, [172, 17, 0, 101]],         # Option 06 (DNS Server).
-                add_certificate=True,           # Option 90 (DHCP authentication option)
+                # Option 06 (DNS Server).
+                [6, 4, [172, 17, 0, 101]],
+                # Option 90 (DHCP authentication option)
+                add_certificate=True,
                 )
 
         packet = dhcp_msg + dhcp_opt
