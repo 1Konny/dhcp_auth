@@ -154,17 +154,6 @@ class DHCPBase:
 
         return packet
 
-    def create_dhcp_auth_packet(self, certificate):
-        assert isinstance(certificate, crypto.X509)
-        cert_data = crypto.dump_certificate(crypto.FILETYPE_PEM, certificate)
-
-        packet = b''
-        packet += struct.pack('!1B', 90)
-        packet += struct.pack('!I', len(cert_data))
-        packet += cert_data 
-
-        return packet
-
     def create_dhcp_option_packet(
             self,
             *triplets,
@@ -183,6 +172,17 @@ class DHCPBase:
             packet += self.my_dhcp_auth_packet
 
         packet += struct.pack('!1B', 255)
+
+        return packet
+
+    def create_dhcp_auth_packet(self, certificate):
+        assert isinstance(certificate, crypto.X509)
+        cert_data = crypto.dump_certificate(crypto.FILETYPE_PEM, certificate)
+
+        packet = b''
+        packet += struct.pack('!1B', 90)
+        packet += struct.pack('!I', len(cert_data))
+        packet += cert_data 
 
         return packet
 
