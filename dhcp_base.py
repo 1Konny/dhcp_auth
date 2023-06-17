@@ -7,6 +7,7 @@ from OpenSSL import crypto
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import padding
 
+
 class DHCPBase:
     def __init__(
             self, 
@@ -14,46 +15,58 @@ class DHCPBase:
             server_port=67,
             client_port=68,
             msg_cutoff=240,
-            cert_max_size=2048,
-            cert_root=None,
-            my_cert_name=None,
-            my_key_name=None,
-            trusted_cert_name=None,
-            magic_cookie=b'\x63\x82\x53\x63',
+            msg_buffer_size=4096,
+            ca_asset_dir=None,
+            ca_asset_name=None,
+            my_asset_dir=None,
+            my_asset_name=None,
             ):
+
+        self.my_haddr = getmac.get_mac_address().replace(':', '')
 
         self.server_ip = server_ip
         self.server_port = server_port
         self.client_port = client_port 
-        self.cert_max_size = cert_max_size
         self.msg_cutoff = msg_cutoff
-        self.magic_cookie = magic_cookie
+        self.msg_buffer_size = msg_buffer_size
 
-        self.my_haddr = getmac.get_mac_address().replace(':', '')
+        self.my_asset_dir = my_asset_dir 
+        self.my_asset_name = my_asset_name 
+        self.my_key = None
+        self.my_cert = None
+        self.my_dhcp_auth_packet= None
+        if my_asset_dir:
+            self.my_asset_dir = pathlib.Path(my_asset_dir)
 
-        if cert_root is not None:
-            self.cert_root = pathlib.Path(cert_root)
+            if my_asset_name is not None:
+                try:
+                    self.my_key = self.load_private_key(self.my_asset_dir / f'{my_asset_name}.key')
+                except:
+                    pass
 
-            if my_key_name is not None:
-                self.my_private_key = self.load_private_key(self.cert_root / my_key_name)
-            else:
-                self.my_private_key = None
+                try:
+                    self.my_cert = self.load_certificate(self.my_asset_dir / f'{my_asset_name}.crt')
+                    self.my_dhcp_auth_packet = self.create_dhcp_auth_packet(self.my_cert)
+                except:
+                    pass
 
-            if my_cert_name is not None:
-                self.my_cert = self.load_certificate(self.cert_root / my_cert_name)
-                self.my_dhcp_auth_packet = self.create_dhcp_auth_packet(self.my_cert)
-            else:
-                self.my_cert = None
-                self.my_dhcp_auth_packet = None 
+        self.ca_asset_dir = ca_asset_dir
+        self.ca_cert = None
+        if ca_asset_dir:
+            self.ca_asset_dir = pathlib.Path(ca_asset_dir)
 
-            if trusted_cert_name is not None:
-                self.trusted_cert = self.load_certificate(self.cert_root / trusted_cert_name)
-            else:
-                self.trusted_cert = None
+            if ca_asset_name is not None:
+                try:
+                    self.ca_cert = self.load_certificate(self.ca_asset_dir / f'{ca_asset_name}.crt')
+                except:
+                    pass
 
         self.cert_store = crypto.X509Store()
-        if self.trusted_cert is not None:
-            self.cert_store.add_cert(self.trusted_cert)
+        if self.ca_cert is not None:
+            self.cert_store.add_cert(self.ca_cert)
+
+        self.time_dict = {}
+        self.length_dict = {}
 
     def load_private_key(self, path, password=None):
         if password is not None:

@@ -1,3 +1,4 @@
+import time
 import socket
 import struct
 
@@ -8,18 +9,20 @@ class DHCPServer(DHCPBase):
     def __init__(
             self, 
             server_ip,
-            cert_root,
-            server_cert_name,
-            server_key_name,
-            ca_cert_name,
+            ca_asset_dir,
+            ca_asset_name,
+            my_asset_dir,
+            my_asset_name,
             ): 
         super().__init__(
                 server_ip=server_ip,
-                cert_root=cert_root,
-                my_cert_name=server_cert_name,
-                my_key_name=server_key_name,
-                trusted_cert_name=ca_cert_name,
+                ca_asset_dir=ca_asset_dir,
+                ca_asset_name=ca_asset_name,
+                my_asset_dir=my_asset_dir,
+                my_asset_name=my_asset_name,
                 )
+
+        self.time_dict = {}
 
     def create_dhcp_offer_packet(self, transaction_id, client_mac):
         # Reference: https://en.wikipedia.org/wiki/Dynamic_Host_Configuration_Protocol#Offer
@@ -49,7 +52,7 @@ class DHCPServer(DHCPBase):
         packet = dhcp_msg + dhcp_opt
 
         # Sign the packet with server's private key
-        signature = self.sign_message(packet, self.my_private_key)
+        signature = self.sign_message(packet, self.my_key)
         packet += signature
 
         return packet
@@ -82,7 +85,7 @@ class DHCPServer(DHCPBase):
         packet = dhcp_msg + dhcp_opt
 
         # Sign the packet with server's private key
-        signature = self.sign_message(packet, self.my_private_key)
+        signature = self.sign_message(packet, self.my_key)
         packet += signature
 
         return packet
@@ -96,28 +99,52 @@ class DHCPServer(DHCPBase):
 
         while True:
             # Receive DHCP discover packet from client
-            rx_data, rx_address = self.socket.recvfrom(1024)
-            transaction_id = struct.unpack('!I', rx_data[4:8])[0]
-            client_mac = ':'.join('{:02x}'.format(byte) for byte in rx_data[28:34]).replace(':', '')
+            discover_packet, rx_address = self.socket.recvfrom(self.msg_buffer_size)
+            self.length_dict['discover_packet'] = len(discover_packet)
+            transaction_id = struct.unpack('!I', discover_packet[4:8])[0]
+            client_mac = ':'.join('{:02x}'.format(byte) for byte in discover_packet[28:34]).replace(':', '')
             print("Received DHCP discover from {} (transaction ID: {})".format(client_mac, transaction_id))
 
             # Create and send DHCP offer packet to client
+            self.time_dict['offer_packet_generate_stime'] = time.time()
             offer_packet = self.create_dhcp_offer_packet(transaction_id, client_mac)
+            self.time_dict['offer_packet_generate_etime'] = time.time()
+            self.time_dict['offer_packet_generate_time'] = self.time_dict['offer_packet_generate_etime'] - self.time_dict['offer_packet_generate_stime'] 
+            self.length_dict['offer_packet'] = len(offer_packet)
             self.socket.sendto(offer_packet, rx_address)
             print("DHCP offer sent to {} (transaction ID: {})".format(rx_address[0], transaction_id))
 
             # Receive DHCP request packet from client
-            data, address = self.socket.recvfrom(1024)
-            transaction_id = struct.unpack('!I', data[4:8])[0]
-            client_mac = ':'.join('{:02x}'.format(byte) for byte in data[28:34]).replace(':', '')
+            request_packet, address = self.socket.recvfrom(self.msg_buffer_size)
+            self.length_dict['request_packet'] = len(request_packet)
+            transaction_id = struct.unpack('!I', request_packet[4:8])[0]
+            client_mac = ':'.join('{:02x}'.format(byte) for byte in request_packet[28:34]).replace(':', '')
             print("Received DHCP request from {} (transaction ID: {})".format(address[0], transaction_id))
 
             # Create and send DHCP ACK packet to client
+            self.time_dict['ack_packet_generate_stime'] = time.time()
             ack_packet = self.create_dhcp_ack_packet(transaction_id, client_mac)
+            self.time_dict['ack_packet_generate_etime'] = time.time()
+            self.time_dict['ack_packet_generate_time'] = self.time_dict['ack_packet_generate_etime'] - self.time_dict['ack_packet_generate_stime'] 
+            self.length_dict['ack_packet'] = len(ack_packet)
             self.socket.sendto(ack_packet, address)
             print("DHCP ACK sent to {} (transaction ID: {})".format(address[0], transaction_id))
+            print('='*50)
+
+            print('Discover packet length: {}'.format(self.length_dict['discover_packet']))
+            print('Offer packet length: {}'.format(self.length_dict['offer_packet']))
+            print('Offer packet generate time: {}'.format(self.time_dict['offer_packet_generate_time']))
+            print('Request packet length: {}'.format(self.length_dict['request_packet']))
+            print('ACK packet length: {}'.format(self.length_dict['ack_packet']))
+            print('ACK packet generate time: {}'.format(self.time_dict['ack_packet_generate_time']))
+            print('='*50)
+
+            break
 
         self.stop()
+
+        self.time_dict = {k:v for k,v in self.time_dict.items() if 'stime' not in k and 'etime' not in k}
+        return self.length_dict, self.time_dict
 
     def stop(self):
         if self.socket:
@@ -126,15 +153,15 @@ class DHCPServer(DHCPBase):
 
 if __name__ == '__main__':
     server_ip = '172.17.0.2'
-    cert_root = 'certificates'
-    server_cert_name = 'dhcp.server.crt.nopass'
-    server_key_name = 'dhcp.server.key.nopass'
-    ca_cert_name = 'rootCA.crt'
+    ca_asset_dir = 'certificates/rootCA/2048'
+    ca_asset_name = 'rootCA'
+    my_asset_dir = 'certificates/server/4096'
+    my_asset_name = 'server'
     server = DHCPServer(
             server_ip=server_ip,
-            cert_root=cert_root,
-            server_cert_name=server_cert_name,
-            server_key_name=server_key_name,
-            ca_cert_name=ca_cert_name,
+            ca_asset_dir=ca_asset_dir,
+            ca_asset_name=ca_asset_name,
+            my_asset_dir=my_asset_dir,
+            my_asset_name=my_asset_name,
             )
-    server.start()
+    length_dict, time_dict = server.start()
