@@ -7,13 +7,13 @@ from dhcp_base import DHCPBase
 
 class DHCPServer(DHCPBase):
     def __init__(
-            self, 
+            self,
             server_ip,
             ca_asset_dir,
             ca_asset_name,
             my_asset_dir,
             my_asset_name,
-            ): 
+            ):
         super().__init__(
                 server_ip=server_ip,
                 ca_asset_dir=ca_asset_dir,
@@ -27,7 +27,7 @@ class DHCPServer(DHCPBase):
     def create_dhcp_offer_packet(self, transaction_id, client_mac):
         # Reference: https://en.wikipedia.org/wiki/Dynamic_Host_Configuration_Protocol#Offer
 
-        # Create the DHCP offer msg 
+        # Create the DHCP offer msg
         dhcp_msg = self.create_dhcp_msg_packet(
                 op=2,
                 transaction_id=transaction_id,
@@ -37,16 +37,22 @@ class DHCPServer(DHCPBase):
                 chaddr=client_mac,
                 )
 
-        # Create the DHCP offer option 
+        # Create the DHCP offer option
         dhcp_opt = self.create_dhcp_option_packet(
-                [53, 1, [2]],                   # Option 53 (DHCP message type). 2 for DHCP Offer.
-                [1, 4, [255, 255, 255, 0]],     # Option 01 (Subnet Mask).
-                [3, 4, [172, 17, 0, 100]],       # Option 03 (Router IP).
-                [51, 4, [0, 1, 81, 128]],       # Option 51 (IP address lease time). For 1 day.
+                # Option 53 (DHCP message type). 2 for DHCP Offer.
+                [53, 1, [2]],
+                # Option 01 (Subnet Mask).
+                [1, 4, [255, 255, 255, 0]],
+                # Option 03 (Router IP).
+                [3, 4, [172, 17, 0, 100]],
+                # Option 51 (IP address lease time). For 1 day.
+                [51, 4, [0, 1, 81, 128]],
                 # # Option 54 (DHCP server identifier).
                 [54, 4, [int(val) for val in self.server_ip.split('.')]],
-                [6, 4, [172, 17, 0, 101]],         # Option 06 (DNS Server).
-                add_certificate=True,           # Option 90 (DHCP authentication option)
+                # Option 06 (DNS Server).
+                [6, 4, [172, 17, 0, 101]],
+                # Option 90 (DHCP authentication option)
+                add_certificate=True,
                 )
 
         packet = dhcp_msg + dhcp_opt
@@ -60,7 +66,7 @@ class DHCPServer(DHCPBase):
     def create_dhcp_ack_packet(self, transaction_id, client_mac):
         # Reference: https://en.wikipedia.org/wiki/Dynamic_Host_Configuration_Protocol#Acknowledgement
 
-        # Create the DHCP ACK msg 
+        # Create the DHCP ACK msg
         dhcp_msg = self.create_dhcp_msg_packet(
                 op=2,
                 transaction_id=transaction_id,
@@ -70,7 +76,7 @@ class DHCPServer(DHCPBase):
                 chaddr=client_mac,
                 )
 
-        # Create the DHCP ACK option 
+        # Create the DHCP ACK option
         dhcp_opt = self.create_dhcp_option_packet(
                 [53, 1, [5]],                   # Option 53 (DHCP message type). 5 for DHCP Ack.
                 [1, 4, [255, 255, 255, 0]],     # Option 01 (Subnet Mask).
@@ -109,7 +115,7 @@ class DHCPServer(DHCPBase):
             self.time_dict['offer_packet_generate_stime'] = time.time()
             offer_packet = self.create_dhcp_offer_packet(transaction_id, client_mac)
             self.time_dict['offer_packet_generate_etime'] = time.time()
-            self.time_dict['offer_packet_generate_time'] = self.time_dict['offer_packet_generate_etime'] - self.time_dict['offer_packet_generate_stime'] 
+            self.time_dict['offer_packet_generate_time'] = self.time_dict['offer_packet_generate_etime'] - self.time_dict['offer_packet_generate_stime']
             self.length_dict['offer_packet'] = len(offer_packet)
             self.socket.sendto(offer_packet, rx_address)
             print("DHCP offer sent to {} (transaction ID: {})".format(rx_address[0], transaction_id))
@@ -125,7 +131,7 @@ class DHCPServer(DHCPBase):
             self.time_dict['ack_packet_generate_stime'] = time.time()
             ack_packet = self.create_dhcp_ack_packet(transaction_id, client_mac)
             self.time_dict['ack_packet_generate_etime'] = time.time()
-            self.time_dict['ack_packet_generate_time'] = self.time_dict['ack_packet_generate_etime'] - self.time_dict['ack_packet_generate_stime'] 
+            self.time_dict['ack_packet_generate_time'] = self.time_dict['ack_packet_generate_etime'] - self.time_dict['ack_packet_generate_stime']
             self.length_dict['ack_packet'] = len(ack_packet)
             self.socket.sendto(ack_packet, address)
             print("DHCP ACK sent to {} (transaction ID: {})".format(address[0], transaction_id))
