@@ -167,7 +167,7 @@ if __name__ == '__main__':
     server_ip = '172.17.0.2'
     ca_asset_dir = 'certificates/rootCA/2048'
     ca_asset_name = 'rootCA'
-    my_asset_dir = 'certificates/server/4096'
+    my_asset_dir = 'certificates/server/2048'
     my_asset_name = 'server'
     server = DHCPServer(
             server_ip=server_ip,
